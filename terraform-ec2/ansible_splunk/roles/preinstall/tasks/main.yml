@@ -1,0 +1,132 @@
+---
+- name: Install required packages
+  package:
+    name:
+      - net-tools
+      - ntpstat
+      - wget
+    state: present
+
+- name: Set hostname
+  hostname:
+    name: "{{ inventory_hostname_short }}"
+
+- name: Create splunk group
+  group:
+    name: splunk
+    state: present
+
+- name: Create splunk user
+  user:
+    name: splunk
+    group: splunk
+    shell: /bin/bash
+    state: present
+
+- name: Create /opt/splunk directory
+  file:
+    path: /opt/splunk
+    state: directory
+    owner: splunk
+    group: splunk
+    mode: '0755'
+
+- name: Disable Transparent Huge Pages (THP) on RHEL 9.6+
+  copy:
+    dest: /etc/systemd/system/disable-thp.service
+    content: |
+      [Unit]
+      Description=Disable Transparent Huge Pages and defrag
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled; echo never > /sys/kernel/mm/transparent_hugepage/defrag'
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reload systemd
+
+- name: Enable disable-thp service
+  systemd:
+    name: disable-thp
+    enabled: yes
+
+- name: Set ulimits for splunk user
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "{{ item }}"
+    state: present
+  loop:
+    - "* soft nofile 64000"
+    - "* hard nofile unlimited"
+    - "* soft nproc 16000"
+    - "* hard nproc unlimited"
+    - "* soft data 8000000"
+    - "* hard data unlimited"
+    - "* soft fsize unlimited"
+    - "* hard fsize unlimited"
+
+- name: Validate OS version
+  command: cat /etc/os-release
+  register: os_info
+  changed_when: false
+
+- name: Display OS version
+  debug:
+    var: os_info.stdout_lines
+
+- name: Check disk usage for /opt
+  command: df -kh /opt/splunk
+  register: disk_check
+  changed_when: false
+
+- name: Display disk check result
+  debug:
+    var: disk_check.stdout_lines
+
+- name: Check CPU info
+  command: lscpu
+  register: cpu_info
+  changed_when: false
+
+- name: Display CPU info
+  debug:
+    var: cpu_info.stdout_lines
+
+- name: Check memory info
+  command: free -h
+  register: mem_info
+  changed_when: false
+
+- name: Display memory info
+  debug:
+    var: mem_info.stdout_lines
+
+- name: Check ports
+  shell: ss -tuln | grep -E ':8000|:8089|:8088|:9997|:8065|:8181|:9887|:8191|:514|:9777' || true
+  register: port_check
+  changed_when: false
+
+- name: Display open ports
+  debug:
+    var: port_check.stdout_lines
+
+- name: Check THP status
+  shell: cat /sys/kernel/mm/transparent_hugepage/enabled
+  register: thp_status
+  changed_when: false
+
+- name: Display THP status
+  debug:
+    var: thp_status.stdout_lines
+
+- name: Check NTP sync
+  command: ntpstat
+  register: ntp_check
+  failed_when: ntp_check.rc != 0 and '"unsynchronised" not in ntp_check.stdout'
+  changed_when: false
+
+- name: Display NTP sync status
+  debug:
+    var: ntp_check.stdout

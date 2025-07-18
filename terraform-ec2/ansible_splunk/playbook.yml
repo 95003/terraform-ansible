@@ -1,0 +1,5 @@
+- name: Splunk Pre-Installation Automation
+  hosts: all
+  become: true
+  roles:
+    - preinstall
